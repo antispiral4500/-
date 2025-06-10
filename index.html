@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>뱀서류 게임 (강화 버전)</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #222;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #eee;
+        }
+        canvas {
+            background-color: #333;
+            border: 2px solid #555;
+        }
+        #gameOverlay {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            font-size: 1.2em;
+            padding: 10px 20px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            z-index: 5;
+        }
+        #gameOverScreen, #levelUpScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            display: none;
+            font-size: 2em;
+            z-index: 100;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+        }
+        #gameOverScreen button, #levelUpScreen .skill-option button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 0.9em;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            transition: background-color 0.2s ease;
+        }
+        #gameOverScreen button:hover, #levelUpScreen .skill-option button:hover {
+            background-color: #0056b3;
+        }
+
+        #levelUpScreen h2 {
+            margin-bottom: 25px;
+            color: #00f0f0;
+            font-size: 1.8em;
+        }
+        #levelUpScreen .skill-options-container {
+            display: flex; /* Flexbox 활성화 */
+            justify-content: center; /* 가로 중앙 정렬 */
+            gap: 20px;
+            /* flex-wrap: wrap; */ /* 필요하다면 줄바꿈 허용 (현재는 가로로만 정렬) */
+        }
+        #levelUpScreen .skill-option {
+            background-color: #222;
+            border: 2px solid #00f0f0;
+            border-radius: 10px;
+            padding: 20px;
+            width: 250px;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+        #levelUpScreen .skill-option h3 {
+            color: #00f0f0;
+            margin-top: 0;
+            font-size: 1.3em;
+        }
+        #levelUpScreen .skill-option p {
+            font-size: 1em;
+            line-height: 1.4;
+            flex-grow: 1;
+        }
+        #levelUpScreen .skill-option button {
+            width: 90%;
+            font-size: 1em;
+        }
+        #skillList {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 0.9em;
+            min-width: 150px;
+            z-index: 5;
+        }
+        #skillList div {
+            margin-bottom: 5px;
+        }
+        #skillList div:last-child {
+            margin-bottom: 0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="960" height="720"></canvas>
+
+    <div id="gameOverlay">
+        <div>레벨: <span id="levelDisplay">1</span></div>
+        <div>경험치: <span id="expDisplay">0</span> / <span id="expToNextLevelDisplay">100</span></div>
+    </div>
+
+    <div id="skillList">
+        <h3>획득 스킬</h3>
+        <div id="activeSkills">
+            </div>
+    </div>
+
+    <div id="gameOverScreen">
+        게임 오버!
+        <button onclick="restartGame()">다시 시작</button>
+    </div>
+
+    <div id="levelUpScreen">
+        <h2>레벨업! 스킬을 선택하세요!</h2>
+        <div class="skill-options-container" id="skillOptions">
+            </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const levelUpScreen = document.getElementById('levelUpScreen');
+        const skillOptionsContainer = document.getElementById('skillOptions');
+        const levelDisplay = document.getElementById('levelDisplay');
+        const expDisplay = document.getElementById('expDisplay');
+        const expToNextLevelDisplay = document.getElementById('expToNextLevelDisplay');
+        const activeSkillsDisplay = document.getElementById('activeSkills');
+
+        // 게임 상태 변수
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            size: 30,
+            speed: 5,
+            level: 1,
+            exp: 0,
+            expToNextLevel: 100
+        };
+
+        let monsters = [];
+        let bullets = []; // 기본 공격 발사체
+        let orbs = []; // 광탄 스킬 발사체 (Orb)
+        let areaOfEffects = []; // 회전 베기 스킬 효과 (AoE)
+
+        const MONSTER_SIZE = 20;
+        const MONSTER_BASE_HEALTH = 10; // 몬스터 기본 체력
+        const MONSTER_SPEED = 1;
+        
+        let initialMonsterSpawnInterval = 1000; // 1초마다 몬스터 생성 (초기값)
+        let currentMonsterSpawnInterval = initialMonsterSpawnInterval;
+        let lastMonsterSpawnTime = 0;
+
+        const BULLET_SIZE = 10;
+        const BULLET_SPEED = 7;
+        const BASIC_ATTACK_INTERVAL = 500; // 0.5초마다 기본 공격
+        let lastBasicAttackTime = 0;
+
+        const ORB_COUNT_PER_LEVEL = 1;
+        const ORB_RADIUS = 50; // 광탄이 도는 반지름
+        const ORB_SPEED_ANGULAR = 0.05; // 광탄 회전 속도
+        const ORB_DAMAGE = 5;
+
+        const SPIN_SLASH_BASE_COOLDOWN = 5000; // 5초 기본 쿨타임
+        const SPIN_SLASH_COOLDOWN_REDUCTION_PER_LEVEL = 500; // 레벨당 0.5초 감소
+        const SPIN_SLASH_LENGTH = 120; // 회전 베기 막대 길이 (범위)
+        const SPIN_SLASH_WIDTH = 10; // 회전 베기 막대 두께
+        const SPIN_SLASH_DURATION = 500; // 0.5초 지속 (애니메이션)
+        const SPIN_SLASH_DAMAGE = 10;
+        let lastSpinSlashTime = 0;
+
+        let isGameOver = false;
+        let isLevelingUp = false; // 레벨업 중인지 여부
+
+        let gameTime = 0; // 게임 경과 시간 (밀리초)
+        let lastFrameTime = 0; // 이전 프레임 시간
+
+        // 스킬 데이터 정의
+        const skills = {
+            basicAttack: {
+                name: "기본공격",
+                description: "기본 공격을 강화합니다. 탄막 수 증가.",
+                level: 0,
+                maxLevel: 5, // 임시 최대 레벨
+                applyEffect: (player) => {
+                    player.basicAttackCount = (player.basicAttackCount || 0) + 1;
+                },
+                getEffectDescription: (level) => `탄막 수: ${level + 1}개`
+            },
+            orbAttack: {
+                name: "광탄",
+                description: "광탄이 캐릭터 주변을 돌면서 적을 공격합니다. 광탄 수 증가.",
+                level: 0,
+                maxLevel: 3,
+                applyEffect: (player) => {
+                    player.orbCount = (player.orbCount || 0) + ORB_COUNT_PER_LEVEL;
+                    // 이미 활성화된 광탄 재정렬 (수가 늘었을 때)
+                    orbs = []; // 기존 광탄 제거 후 새로 생성
+                    for (let i = 0; i < player.orbCount; i++) {
+                        orbs.push({
+                            angle: (Math.PI * 2 / player.orbCount) * i, // 등간격 배치
+                            size: 15,
+                            damage: ORB_DAMAGE
+                        });
+                    }
+                },
+                getEffectDescription: (level) => `광탄 수: ${level + 1}개`
+            },
+            spinSlash: {
+                name: "회전베기",
+                description: "일정 쿨타임 후 캐릭터 위아래로 막대기가 빠르게 회전하며 적들을 베어버립니다. 쿨타임이 감소합니다.",
+                level: 0,
+                maxLevel: 5, // 쿨타임 감소를 위한 레벨 추가
+                applyEffect: (player) => {
+                    // 회전베기 스킬 활성화 (특별한 능력치 증가 없음)
+                },
+                getEffectDescription: (level) => {
+                    const currentCooldown = SPIN_SLASH_BASE_COOLDOWN - (level * SPIN_SLASH_COOLDOWN_REDUCTION_PER_LEVEL);
+                    return level === 0 ? "스킬 획득" : `쿨타임: ${currentCooldown / 1000}초`;
+                }
+            }
+        };
+
+        // 플레이어 이동을 위한 키 상태
+        let keys = {
+            ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+            KeyW: false, KeyS: false, KeyA: false, KeyD: false
+        };
+
+        document.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.code)) {
+                keys[e.code] = true;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.code)) {
+                keys[e.code] = false;
+            }
+        });
+
+        function updatePlayerPosition() {
+            if (isLevelingUp || isGameOver) return; // 레벨업 중이거나 게임 오버 시 이동 금지
+
+            if (keys.ArrowUp || keys.KeyW) player.y -= player.speed;
+            if (keys.ArrowDown || keys.KeyS) player.y += player.speed;
+            if (keys.ArrowLeft || keys.KeyA) player.x -= player.speed;
+            if (keys.ArrowRight || keys.KeyD) player.x += player.speed;
+
+            // 화면 경계 제한
+            player.x = Math.max(0, Math.min(canvas.width - player.size, player.x));
+            player.y = Math.max(0, Math.min(canvas.height - player.size, player.y));
+        }
+
+        function spawnMonster() {
+            let x, y;
+            const spawnEdge = Math.floor(Math.random() * 4); // 0: top, 1: right, 2: bottom, 3: left
+
+            if (spawnEdge === 0) { // top
+                x = Math.random() * canvas.width;
+                y = -MONSTER_SIZE;
+            } else if (spawnEdge === 1) { // right
+                x = canvas.width + MONSTER_SIZE;
+                y = Math.random() * canvas.height;
+            } else if (spawnEdge === 2) { // bottom
+                x = Math.random() * canvas.width;
+                y = canvas.height + MONSTER_SIZE;
+            } else { // left
+                x = -MONSTER_SIZE;
+                y = Math.random() * canvas.height;
+            }
+
+            // 몬스터 체력은 게임 시간에 비례하여 증가
+            const healthIncreaseFactor = gameTime / 60000; // 1분당 100% 증가 (예시)
+            const monsterHealth = MONSTER_BASE_HEALTH * (1 + healthIncreaseFactor);
+
+            monsters.push({
+                id: Date.now() + Math.random(), // 몬스터 고유 ID (제거 시 필요)
+                x: x,
+                y: y,
+                size: MONSTER_SIZE,
+                health: monsterHealth,
+                maxHealth: monsterHealth // 체력바 표시를 위해 최대 체력 저장
+            });
+        }
+
+        function updateMonsters() {
+            monsters = monsters.filter(monster => {
+                // 플레이어를 향해 이동
+                const angle = Math.atan2(player.y - monster.y, player.x - monster.x);
+                monster.x += Math.cos(angle) * MONSTER_SPEED;
+                monster.y += Math.sin(angle) * MONSTER_SPEED;
+
+                // 플레이어와 충돌 감지
+                if (
+                    player.x < monster.x + monster.size &&
+                    player.x + player.size > monster.x &&
+                    player.y < monster.y + monster.size &&
+                    player.y + player.size > monster.y
+                ) {
+                    isGameOver = true; // 실제 게임에선 플레이어 체력 감소
+                }
+                return true; // 일단은 모두 유지 (게임 오버는 별도로 처리)
+            });
+
+            // 게임 오버 시 몬스터 이동 멈춤
+            if (isGameOver) {
+                monsters = [];
+            }
+        }
+
+        function findClosestMonster() {
+            let closestMonster = null;
+            let minDistance = Infinity;
+
+            monsters.forEach(monster => {
+                const dist = Math.hypot(player.x - monster.x, player.y - monster.y);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    closestMonster = monster;
+                }
+            });
+            return closestMonster;
+        }
+
+        function performBasicAttack() {
+            if (isGameOver || isLevelingUp) return;
+
+            const now = performance.now();
+            if (now - lastBasicAttackTime > BASIC_ATTACK_INTERVAL) {
+                const target = findClosestMonster();
+                if (target) {
+                    // 기본 공격 탄막 수 만큼 발사
+                    const attackCount = skills.basicAttack.level + 1; // 레벨 0 -> 1개, 레벨 1 -> 2개
+                    // 기본 공격 데미지: 적의 현재 HP의 1.5배
+                    const basicAttackDamage = target.health * 1.5; 
+
+                    for (let i = 0; i < attackCount; i++) {
+                        // 약간의 스프레드 (여러 발 나갈 때)
+                        const spreadAngle = (Math.random() - 0.5) * 0.2; // -0.1 ~ 0.1 라디안
+                        const angle = Math.atan2(target.y - player.y, target.x - player.x) + spreadAngle;
+
+                        bullets.push({
+                            x: player.x + player.size / 2,
+                            y: player.y + player.size / 2,
+                            size: BULLET_SIZE,
+                            speedX: Math.cos(angle) * BULLET_SPEED,
+                            speedY: Math.sin(angle) * BULLET_SPEED,
+                            damage: basicAttackDamage // 변경된 데미지 적용
+                        });
+                    }
+                }
+                lastBasicAttackTime = now;
+            }
+        }
+
+        function updateBullets() {
+            bullets = bullets.filter(bullet => {
+                bullet.x += bullet.speedX;
+                bullet.y += bullet.speedY;
+
+                // 화면 밖으로 나가면 제거
+                if (bullet.x < -bullet.size || bullet.x > canvas.width + bullet.size ||
+                    bullet.y < -bullet.size || bullet.y > canvas.height + bullet.size) {
+                    return false;
+                }
+
+                // 몬스터와 충돌 감지
+                for (let i = 0; i < monsters.length; i++) {
+                    const monster = monsters[i];
+                    if (
+                        bullet.x < monster.x + monster.size &&
+                        bullet.x + bullet.size > monster.x &&
+                        bullet.y < monster.y + monster.size &&
+                        bullet.y + bullet.size > monster.y
+                    ) {
+                        monster.health -= bullet.damage;
+                        if (monster.health <= 0) {
+                            player.exp += 10; // 몬스터 처치 시 경험치 획득
+                            checkLevelUp();
+                            monsters.splice(i, 1); // 몬스터 제거
+                            i--; // 배열 인덱스 보정
+                        }
+                        return false; // 총알 제거
+                    }
+                }
+                return true;
+            });
+        }
+
+        function updateOrbs() {
+            if (skills.orbAttack.level === 0) return; // 스킬 없으면 실행 안함
+
+            orbs.forEach(orb => {
+                orb.angle += ORB_SPEED_ANGULAR; // 회전
+                orb.x = player.x + player.size / 2 + Math.cos(orb.angle) * ORB_RADIUS;
+                orb.y = player.y + player.size / 2 + Math.sin(orb.angle) * ORB_RADIUS;
+
+                // 몬스터와 충돌 감지 (광탄은 지속 데미지 또는 닿으면 데미지)
+                monsters.forEach(monster => {
+                    const dist = Math.hypot(orb.x - monster.x, orb.y - monster.y);
+                    if (dist < orb.size / 2 + monster.size / 2) {
+                        monster.health -= orb.damage; // 몬스터 체력 감소
+                        if (monster.health <= 0) {
+                            player.exp += 10;
+                            checkLevelUp();
+                            // 몬스터 제거는 updateMonsters에서 한 번에 처리
+                        }
+                    }
+                });
+            });
+            // 몬스터 체력 감소로 인한 제거는 updateMonsters에서 한 번에 처리
+            monsters = monsters.filter(m => m.health > 0);
+        }
+
+        function performSpinSlash() {
+            if (skills.spinSlash.level === 0) return; // 스킬 없으면 실행 안함
+
+            const now = performance.now();
+            // 스킬 레벨에 따른 쿨타임 계산
+            const currentSpinSlashCooldown = Math.max(500, SPIN_SLASH_BASE_COOLDOWN - (skills.spinSlash.level * SPIN_SLASH_COOLDOWN_REDUCTION_PER_LEVEL)); // 최소 0.5초 쿨타임
+
+            if (now - lastSpinSlashTime > currentSpinSlashCooldown) {
+                // 회전 베기 효과 생성
+                areaOfEffects.push({
+                    x: player.x + player.size / 2,
+                    y: player.y + player.size / 2,
+                    currentAngle: 0, // 초기 각도
+                    startTime: now,
+                    damage: SPIN_SLASH_DAMAGE,
+                    duration: SPIN_SLASH_DURATION,
+                    hitMonsters: new Set() // 이미 베어진 몬스터 ID 저장
+                });
+                lastSpinSlashTime = now;
+            }
+        }
+
+        function updateAreaOfEffects() {
+            areaOfEffects = areaOfEffects.filter(aoe => {
+                const elapsed = performance.now() - aoe.startTime;
+                if (elapsed > aoe.duration) {
+                    return false; // 지속 시간 끝나면 제거
+                }
+
+                aoe.currentAngle = (elapsed / aoe.duration) * (Math.PI * 2); // 0에서 2PI까지 회전
+
+                // 몬스터와 충돌 감지
+                monsters.forEach(monster => {
+                    if (aoe.hitMonsters.has(monster.id)) { // 이미 데미지 준 몬스터는 스킵
+                        return;
+                    }
+
+                    const playerCenterX = player.x + player.size / 2;
+                    const playerCenterY = player.y + player.size / 2;
+
+                    const monsterCenterX = monster.x + monster.size / 2;
+                    const monsterCenterY = monster.y + monster.size / 2;
+
+                    // 몬스터를 회전된 좌표계로 변환 (막대기가 Y축에 정렬된 것으로 간주)
+                    const relMonsterX = monsterCenterX - playerCenterX;
+                    const relMonsterY = monsterCenterY - playerCenterY;
+                    
+                    const cosAngle = Math.cos(aoe.currentAngle);
+                    const sinAngle = Math.sin(aoe.currentAngle);
+
+                    const rotatedMonsterX = relMonsterX * cosAngle + relMonsterY * sinAngle;
+                    const rotatedMonsterY = -relMonsterX * sinAngle + relMonsterY * cosAngle;
+
+                    // 회전된 좌표계에서 몬스터 원의 경계 사각형과 막대기 사각형의 겹침 확인
+                    if (rotatedMonsterX + monster.size / 2 > -SPIN_SLASH_WIDTH / 2 &&
+                        rotatedMonsterX - monster.size / 2 < SPIN_SLASH_WIDTH / 2 &&
+                        rotatedMonsterY + monster.size / 2 > -SPIN_SLASH_LENGTH / 2 &&
+                        rotatedMonsterY - monster.size / 2 < SPIN_SLASH_LENGTH / 2)
+                    {
+                        monster.health -= aoe.damage;
+                        aoe.hitMonsters.add(monster.id); // 데미지 준 몬스터 ID 기록
+
+                        if (monster.health <= 0) {
+                            player.exp += 10;
+                            checkLevelUp();
+                        }
+                    }
+                });
+                monsters = monsters.filter(m => m.health > 0);
+                return true;
+            });
+        }
+
+
+        function checkLevelUp() {
+            if (player.exp >= player.expToNextLevel && !isLevelingUp) {
+                player.level++;
+                player.exp -= player.expToNextLevel; // 남은 경험치 처리
+                player.expToNextLevel = Math.floor(player.expToNextLevel * 1.5); // 다음 레벨 경험치 증가
+                updateUI();
+                showLevelUpScreen();
+            }
+        }
+
+        function showLevelUpScreen() {
+            isLevelingUp = true;
+            levelUpScreen.style.display = 'block';
+            skillOptionsContainer.innerHTML = ''; // 기존 스킬 옵션 초기화
+
+            const availableSkills = Object.keys(skills).filter(key => skills[key].level < skills[key].maxLevel);
+
+            let chosenSkillKeys = [];
+            // 랜덤으로 3개의 스킬 선택 (중복 없이)
+            while (chosenSkillKeys.length < 3 && availableSkills.length > 0) {
+                const randomIndex = Math.floor(Math.random() * availableSkills.length);
+                const skillKey = availableSkills.splice(randomIndex, 1)[0]; // 선택 후 배열에서 제거
+                chosenSkillKeys.push(skillKey);
+            }
+
+            // 만약 3개 미만의 스킬만 남았다면, 남은 스킬만 표시
+            chosenSkillKeys.forEach(key => {
+                const skill = skills[key];
+                const skillOptionDiv = document.createElement('div');
+                skillOptionDiv.classList.add('skill-option');
+                skillOptionDiv.innerHTML = `
+                    <h3>${skill.name}</h3>
+                    <p>${skill.description}</p>
+                    <p>현재 레벨: ${skill.level}, 다음 효과: ${skill.getEffectDescription(skill.level)}</p>
+                    <button onclick="selectSkill('${key}')">선택</button>
+                `;
+                skillOptionsContainer.appendChild(skillOptionDiv);
+            });
+        }
+
+        function selectSkill(skillKey) {
+            const skill = skills[skillKey];
+            if (skill.level < skill.maxLevel) {
+                skill.level++;
+                skill.applyEffect(player); // 스킬 효과 적용 (예: 기본 공격 수 증가, 광탄 생성)
+                hideLevelUpScreen();
+                updateSkillListUI();
+            }
+        }
+
+        function hideLevelUpScreen() {
+            isLevelingUp = false;
+            levelUpScreen.style.display = 'none';
+        }
+
+        function updateUI() {
+            levelDisplay.textContent = player.level;
+            expDisplay.textContent = player.exp;
+            expToNextLevelDisplay.textContent = player.expToNextLevel;
+        }
+
+        function updateSkillListUI() {
+            activeSkillsDisplay.innerHTML = '';
+            for (const key in skills) {
+                const skill = skills[key];
+                // 스킬 레벨이 0보다 큰 경우만 표시
+                if (skill.level > 0) { 
+                    const skillDiv = document.createElement('div');
+                    // 스킬 레벨이 1 이상일 때만 (level -1) 사용, 그 외는 0 레벨 효과
+                    const effectDescription = skill.getEffectDescription(skill.level -1);
+                    skillDiv.textContent = `${skill.name} Lv.${skill.level} (${effectDescription})`;
+                    activeSkillsDisplay.appendChild(skillDiv);
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // 화면 지우기
+
+            // 플레이어 그리기
+            ctx.fillStyle = 'lime';
+            ctx.fillRect(player.x, player.y, player.size, player.size);
+
+            // 몬스터 그리기
+            ctx.fillStyle = 'red';
+            monsters.forEach(monster => {
+                ctx.beginPath();
+                ctx.arc(monster.x + monster.size / 2, monster.y + monster.size / 2, monster.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+                // 몬스터 체력 바
+                ctx.fillStyle = 'gray';
+                ctx.fillRect(monster.x, monster.y - 10, monster.size, 5);
+                ctx.fillStyle = 'greenyellow';
+                ctx.fillRect(monster.x, monster.y - 10, monster.size * (monster.health / monster.maxHealth), 5); 
+            });
+
+            // 기본 공격 발사체 그리기
+            ctx.fillStyle = 'yellow';
+            bullets.forEach(bullet => {
+                ctx.fillRect(bullet.x, bullet.y, bullet.size, bullet.size);
+            });
+
+            // 광탄 스킬 그리기
+            ctx.fillStyle = 'cyan';
+            orbs.forEach(orb => {
+                ctx.beginPath();
+                ctx.arc(orb.x, orb.y, orb.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // 회전 베기 효과 그리기 (막대기 형태로 변경)
+            areaOfEffects.forEach(aoe => {
+                ctx.save(); // 현재 캔버스 상태 저장
+                ctx.translate(aoe.x, aoe.y); // 플레이어 중심으로 이동
+                ctx.rotate(aoe.currentAngle); // 현재 각도만큼 회전
+
+                ctx.fillStyle = `rgba(255, 200, 0, ${aoe.alpha})`; // 주황색 계열, 투명도 변화
+                // 막대기 그리기 (플레이어 중심에서 위아래로)
+                ctx.fillRect(-SPIN_SLASH_WIDTH / 2, -SPIN_SLASH_LENGTH / 2, SPIN_SLASH_WIDTH, SPIN_SLASH_LENGTH);
+                
+                ctx.restore(); // 저장된 캔버스 상태 복원
+            });
+        }
+
+        function gameLoop(currentTime) {
+            if (isGameOver) {
+                gameOverScreen.style.display = 'block'; // 게임 오버 화면 표시
+                return; // 게임 루프 중단
+            }
+
+            // 게임 시간 업데이트
+            if (lastFrameTime === 0) {
+                lastFrameTime = currentTime;
+            }
+            const deltaTime = currentTime - lastFrameTime;
+            gameTime += deltaTime;
+            lastFrameTime = currentTime;
+
+            // 몬스터 생성 간격 조정 (시간이 지날수록 짧아짐)
+            // 최소 간격은 200ms로 설정하여 너무 빨라지지 않도록 함
+            currentMonsterSpawnInterval = Math.max(200, initialMonsterSpawnInterval - (gameTime / 100)); // 10초마다 100ms 감소 (예시)
+
+            if (isLevelingUp) {
+                // 레벨업 중에는 게임 업데이트를 하지 않고 화면만 띄웁니다.
+                requestAnimationFrame(gameLoop); // 레벨업 화면이 닫히면 다시 이 루프가 호출될 수 있도록
+                return;
+            }
+
+            // 몬스터 생성 시간 관리
+            if (currentTime - lastMonsterSpawnTime > currentMonsterSpawnInterval) {
+                spawnMonster();
+                lastMonsterSpawnTime = currentTime;
+            }
+
+            updatePlayerPosition();
+            performBasicAttack(); // 기본 공격 수행
+            updateBullets();
+            updateMonsters();
+            updateOrbs(); // 광탄 업데이트
+            performSpinSlash(); // 회전베기 시도
+            updateAreaOfEffects(); // 회전베기 효과 업데이트
+
+            draw();
+            updateUI(); // UI 업데이트
+
+            requestAnimationFrame(gameLoop); // 다음 프레임 요청
+        }
+
+        function startGame() {
+            // 게임 초기화
+            player = {
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                size: 30,
+                speed: 5,
+                level: 1,
+                exp: 0,
+                expToNextLevel: 100,
+                basicAttackCount: 0, // 기본 공격 발사체 수 (0 = 1개)
+                orbCount: 0 // 광탄 수
+            };
+            monsters = [];
+            bullets = [];
+            orbs = [];
+            areaOfEffects = [];
+
+            // 스킬 레벨 초기화
+            for (const key in skills) {
+                skills[key].level = 0;
+            }
+
+            isGameOver = false;
+            isLevelingUp = false;
+            gameOverScreen.style.display = 'none';
+            levelUpScreen.style.display = 'none';
+
+            gameTime = 0; // 게임 시간 초기화
+            lastFrameTime = 0; // 프레임 시간 초기화
+            lastMonsterSpawnTime = performance.now();
+            lastBasicAttackTime = performance.now();
+            lastSpinSlashTime = performance.now(); // 쿨타임 초기화
+
+            // 초기 스킬 목록 UI 업데이트
+            updateSkillListUI();
+            updateUI(); // 초기 UI 상태 업데이트
+            requestAnimationFrame(gameLoop); // 게임 루프 시작
+        }
+
+        function restartGame() {
+            startGame();
+        }
+
+        // 게임 시작
+        startGame();
+    </script>
+</body>
+</html>
